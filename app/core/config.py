@@ -20,6 +20,9 @@ if data_dir_env:
 else:
     DATA_DIR = BASE_DIR / "data"
 
+# Лог-файл для отладки
+LOG_FILE = DATA_DIR / "app.log"
+
 INPUT_DIR = DATA_DIR / "input"
 OUTPUT_DIR = DATA_DIR / "output"
 BOOKS_DIR = DATA_DIR / "books"

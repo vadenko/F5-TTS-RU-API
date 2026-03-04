@@ -1,3 +1,4 @@
+import logging
 import shutil
 from pathlib import Path
 
@@ -6,7 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 
 from app.api.books import router as books_router
-from app.core.config import DATA_DIR, INPUT_DIR, OUTPUT_DIR, BOOKS_DIR, TEMP_DIR
+from app.core.config import DATA_DIR, INPUT_DIR, OUTPUT_DIR, BOOKS_DIR, TEMP_DIR, LOG_FILE
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
 
 BASE_DIR = Path(__file__).parent
 
