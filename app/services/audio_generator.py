@@ -28,7 +28,21 @@ from app.models.schemas import OutputFormat, TaskStatus
 from app.services.fb2_parser import FB2Parser
 from app.services.task_manager import Task, task_manager
 
-logger = logging.getLogger(__name__)
+# Простой логгер в файл для Colab
+LOG_FILE_PATH = Path("/content/F5-TTS-RU-API/data/debug.log")
+
+def log_msg(msg):
+    """Запись лога в файл"""
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_line = f"[{timestamp}] {msg}\n"
+    try:
+        LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE_PATH, 'a', encoding='utf-8') as f:
+            f.write(log_line)
+    except:
+        pass
+    print(log_line.strip())
 
 class AudioGenerator:
     """Генератор аудио из текста"""
@@ -84,7 +98,7 @@ class AudioGenerator:
         cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
 
         if not self._model_downloaded:
-            print(f"Downloading model {MODEL_REPO} (F5TTS_v1_Base_v2)...")
+            log_msg(f"Downloading model {MODEL_REPO} (F5TTS_v1_Base_v2)...")
             try:
                 # Скачиваем только нужные файлы из F5TTS_v1_Base_v2
                 ckpt_path = hf_hub_download(
@@ -99,11 +113,15 @@ class AudioGenerator:
                     cache_dir=cache_dir,
                     local_dir_use_symlinks=False
                 )
+                log_msg(f"Downloaded ckpt: {ckpt_path}")
+                log_msg(f"Downloaded vocab: {vocab_path}")
+                log_msg(f"ckpt exists: {os.path.exists(ckpt_path)}")
+                log_msg(f"vocab exists: {os.path.exists(vocab_path)}")
                 self._model_downloaded = True
-                print("Model downloaded successfully")
+                log_msg("Model downloaded successfully")
                 return ckpt_path, vocab_path
             except Exception as e:
-                print(f"Error downloading model: {e}")
+                log_msg(f"Error downloading model: {e}")
                 raise
 
         # Если уже скачено, ищем в кэше
@@ -195,6 +213,12 @@ class AudioGenerator:
             print(f"Warning: Text too long ({len(text_with_accents)}), truncating to {max_len}")
             text_with_accents = text_with_accents[:max_len]
 
+        # Проверяем пути к модели
+        ckpt_path = Path(ckpt_path).absolute()
+        vocab_path = Path(vocab_path).absolute()
+        log_msg(f"Using ckpt: {ckpt_path} (exists: {ckpt_path.exists()})")
+        log_msg(f"Using vocab: {vocab_path} (exists: {vocab_path.exists()})")
+
         cmd = [
             "f5-tts_infer-cli",
             "--ckpt_file", str(ckpt_path),
@@ -203,16 +227,16 @@ class AudioGenerator:
             "--output_dir", str(output_path.parent),
             "--output_file", output_path.name,
             "--device", DEVICE,
-            "--nfe_step", str(NFE_STEPS)  # Количество шагов денойзинга
+            "--nfe_step", str(NFE_STEPS)
         ]
 
-        # Не используем кастомный ref_audio для русского TTS
-        # Модель F5-TTS_RUSSIAN имеет встроенный референс
         if speed != 1.0:
             cmd += ["--speed", str(speed)]
+
+        log_msg(f"Full command: {' '.join(cmd)}")
         
-        logger.info(f"Output path: {output_path}")
-        logger.info(f"Text length: {len(text_with_accents)} chars")
+        log_msg(f"Output path: {output_path}")
+        log_msg(f"Text length: {len(text_with_accents)} chars")
 
         # Создаем директорию заранее
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,18 +272,18 @@ class AudioGenerator:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, run_tts)
             
-            logger.info(f"Return code: {result.returncode}")
+            log_msg(f"Return code: {result.returncode}")
             if result.stdout:
-                logger.info(f"STDOUT: {result.stdout[:500]}")
+                log_msg(f"STDOUT: {result.stdout[:200]}")
             if result.stderr:
-                logger.error(f"STDERR: {result.stderr[:500]}")
+                log_msg(f"STDERR: {result.stderr[:200]}")
 
             if result.returncode != 0:
-                logger.error(f"TTS generation failed with code {result.returncode}")
+                log_msg(f"TTS generation failed with code {result.returncode}")
                 return False
 
-            logger.info(f"Checking for file: {output_path}")
-            logger.info(f"File exists: {output_path.exists()}")
+            log_msg(f"Checking for file: {output_path}")
+            log_msg(f"File exists: {output_path.exists()}")
 
             if not output_path.exists():
                 wav_files = list(Path(output_path.parent).glob("*.wav"))
@@ -267,12 +291,12 @@ class AudioGenerator:
 
             return output_path.exists()
         except subprocess.TimeoutExpired:
-            logger.error("TTS generation timed out")
+            log_msg("TTS generation timed out")
             return False
         except Exception as e:
-            logger.error(f"TTS generation error: {e}")
+            log_msg(f"TTS generation error: {e}")
             import traceback
-            logger.error(traceback.format_exc())
+            log_msg(traceback.format_exc()[:500])
             return False
     
     def _merge_audio_files(
@@ -338,8 +362,8 @@ class AudioGenerator:
         if isinstance(book_path, str):
             book_path = Path(book_path)
         
-        logger.info(f"Starting conversion: {book_path}")
-        logger.info(f"Out format: {out_format}, speed: {speed}, pitch: {voice_pitch}, volume: {voice_volume}")
+        log_msg(f"Starting conversion: {book_path}")
+        log_msg(f"Out format: {out_format}, speed: {speed}")
         
         out_format_str = out_format if isinstance(out_format, str) else str(out_format)
         
@@ -351,10 +375,10 @@ class AudioGenerator:
             content = raw_content.decode(encoding)
             book = self.parser.parse_content(content)
         except Exception as e:
-            logger.error(f"Error parsing book: {e}")
+            log_msg(f"Error parsing book: {e}")
             raise
 
-        logger.info(f"Book title: {book.metadata.title}, chapters: {len(book.chapters)}")
+        log_msg(f"Book title: {book.metadata.title}, chapters: {len(book.chapters)}")
 
         # Debug: show first chapter text
         if book.chapters:
@@ -456,9 +480,9 @@ class AudioGenerator:
                 merged = self._merge_audio_files(chapter_audio_files, chapter_output, OutputFormat.WAV)
                 chapter_files.append((chapter.number, chapter.title, merged))
         
-        logger.info(f"Total chapters processed: {len(chapter_files)}")
+        log_msg(f"Total chapters processed: {len(chapter_files)}")
         for num, title, path in chapter_files:
-            logger.info(f"  Chapter {num}: {path} (exists: {path.exists()})")
+            log_msg(f"  Chapter {num}: {path} (exists: {path.exists()})")
 
         if not chapter_files:
             await task_manager.update_progress(
