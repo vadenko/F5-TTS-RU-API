@@ -1,0 +1,12 @@
+uvicorn[standard]
+fastapi
+aiofiles
+python-multipart
+requests
+huggingface-hub
+tomli
+pydantic
+httpx
+f5-tts
+ruaccent
+python-dotenv
