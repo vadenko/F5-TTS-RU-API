@@ -77,39 +77,50 @@ class AudioGenerator:
                 vocab_path = self._download_vocab(base_path)
             return ckpt_path, vocab_path
         
-        from huggingface_hub import snapshot_download
-        
+        from huggingface_hub import hf_hub_download
+
         cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
-        
+
         if not self._model_downloaded:
-            print(f"Downloading model {MODEL_REPO}...")
+            print(f"Downloading model {MODEL_REPO} (F5TTS_v1_Base_v2)...")
             try:
-                snapshot_download(
+                # Скачиваем только нужные файлы из F5TTS_v1_Base_v2
+                ckpt_path = hf_hub_download(
                     repo_id=MODEL_REPO,
+                    filename="F5TTS_v1_Base_v2/model_last_inference.safetensors",
+                    cache_dir=cache_dir,
+                    local_dir_use_symlinks=False
+                )
+                vocab_path = hf_hub_download(
+                    repo_id=MODEL_REPO,
+                    filename="F5TTS_v1_Base/vocab.txt",
                     cache_dir=cache_dir,
                     local_dir_use_symlinks=False
                 )
                 self._model_downloaded = True
                 print("Model downloaded successfully")
+                return ckpt_path, vocab_path
             except Exception as e:
                 print(f"Error downloading model: {e}")
-        
-        snapshot_glob = os.path.join(cache_dir, f"models--{MODEL_REPO.replace('/', '--')}/snapshots/*")
-        snapshot_dirs = sorted(glob.glob(snapshot_glob), key=os.path.getmtime, reverse=True)
-        
-        if not snapshot_dirs:
-            raise RuntimeError(f"Model snapshot not found in huggingface cache at {snapshot_glob}")
-        
-        snapshot_dir = snapshot_dirs[0]
-        ckpt_path = os.path.join(snapshot_dir, "F5TTS_v1_Base_v2/model_last_inference.safetensors")
-        vocab_path = os.path.join(snapshot_dir, "F5TTS_v1_Base/vocab.txt")
-        
-        if not os.path.isfile(ckpt_path):
-            raise RuntimeError(f"model_last_inference.safetensors not found: {ckpt_path}")
-        if not os.path.isfile(vocab_path):
-            vocab_path = self._download_vocab(snapshot_dir)
-        
-        return ckpt_path, vocab_path
+                raise
+
+        # Если уже скачено, ищем в кэше
+        try:
+            ckpt_path = hf_hub_download(
+                repo_id=MODEL_REPO,
+                filename="F5TTS_v1_Base_v2/model_last_inference.safetensors",
+                cache_dir=cache_dir,
+                local_dir_use_symlinks=False
+            )
+            vocab_path = hf_hub_download(
+                repo_id=MODEL_REPO,
+                filename="F5TTS_v1_Base/vocab.txt",
+                cache_dir=cache_dir,
+                local_dir_use_symlinks=False
+            )
+            return ckpt_path, vocab_path
+        except Exception as e:
+            raise RuntimeError(f"Model files not found: {e}")
     
     def _download_vocab(self, target_dir: str | Path) -> str:
         """Скачивание vocab.txt из оригинального репозитория F5-TTS"""
