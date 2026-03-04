@@ -1,5 +1,6 @@
 import asyncio
 import glob
+import logging
 import os
 import re
 import shutil
@@ -27,6 +28,7 @@ from app.models.schemas import OutputFormat, TaskStatus
 from app.services.fb2_parser import FB2Parser
 from app.services.task_manager import Task, task_manager
 
+logger = logging.getLogger(__name__)
 
 class AudioGenerator:
     """Генератор аудио из текста"""
@@ -209,17 +211,17 @@ class AudioGenerator:
         if speed != 1.0:
             cmd += ["--speed", str(speed)]
         
-        print(f"Output path: {output_path}")
-        print(f"Text length: {len(text_with_accents)} chars")
+        logger.info(f"Output path: {output_path}")
+        logger.info(f"Text length: {len(text_with_accents)} chars")
 
         # Создаем директорию заранее
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        print(f"Directory created: {output_path.parent.exists()}")
+        logger.info(f"Directory created: {output_path.parent.exists()}")
 
         # Проверяем, что f5-tts_infer-cli доступен
         import shutil
         if not shutil.which("f5-tts_infer-cli"):
-            print("ERROR: f5-tts_infer-cli not found in PATH")
+            logger.error("ERROR: f5-tts_infer-cli not found in PATH")
             return False
 
         print(f"Running: {' '.join(cmd[:6])}...")
@@ -246,35 +248,31 @@ class AudioGenerator:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, run_tts)
             
-            print(f"Return code: {result.returncode}")
+            logger.info(f"Return code: {result.returncode}")
             if result.stdout:
-                print(f"STDOUT: {result.stdout[:500]}")
+                logger.info(f"STDOUT: {result.stdout[:500]}")
             if result.stderr:
-                print(f"STDERR: {result.stderr[:500]}")
-            
+                logger.error(f"STDERR: {result.stderr[:500]}")
+
             if result.returncode != 0:
-                print(f"TTS generation failed")
+                logger.error(f"TTS generation failed with code {result.returncode}")
                 return False
-            
-            print(f"Checking for file: {output_path}")
-            print(f"File exists: {output_path.exists()}")
-            print(f"Parent dir exists: {output_path.parent.exists()}")
-            print(f"Parent dir contents: {list(output_path.parent.glob('*'))}")
+
+            logger.info(f"Checking for file: {output_path}")
+            logger.info(f"File exists: {output_path.exists()}")
 
             if not output_path.exists():
                 wav_files = list(Path(output_path.parent).glob("*.wav"))
-                print(f"WAV files in dir: {wav_files}")
-                for f in wav_files:
-                    print(f"  {f.name} exists: {f.exists()}")
-            
+                logger.warning(f"WAV files in dir: {wav_files}")
+
             return output_path.exists()
         except subprocess.TimeoutExpired:
-            print("TTS generation timed out")
+            logger.error("TTS generation timed out")
             return False
         except Exception as e:
-            print(f"TTS generation error: {e}")
+            logger.error(f"TTS generation error: {e}")
             import traceback
-            traceback.print_exc()
+            logger.error(traceback.format_exc())
             return False
     
     def _merge_audio_files(
@@ -340,8 +338,8 @@ class AudioGenerator:
         if isinstance(book_path, str):
             book_path = Path(book_path)
         
-        print(f"Starting conversion: {book_path}")
-        print(f"Out format: {out_format}, speed: {speed}, pitch: {voice_pitch}, volume: {voice_volume}")
+        logger.info(f"Starting conversion: {book_path}")
+        logger.info(f"Out format: {out_format}, speed: {speed}, pitch: {voice_pitch}, volume: {voice_volume}")
         
         out_format_str = out_format if isinstance(out_format, str) else str(out_format)
         
@@ -353,10 +351,10 @@ class AudioGenerator:
             content = raw_content.decode(encoding)
             book = self.parser.parse_content(content)
         except Exception as e:
-            print(f"Error parsing book: {e}")
+            logger.error(f"Error parsing book: {e}")
             raise
 
-        print(f"Book title: {book.metadata.title}, chapters: {len(book.chapters)}")
+        logger.info(f"Book title: {book.metadata.title}, chapters: {len(book.chapters)}")
 
         # Debug: show first chapter text
         if book.chapters:
@@ -436,21 +434,31 @@ class AudioGenerator:
                     speed
                 )
                 
+                print(f"Chunk {chunk_idx} result: success={success}, file_exists={chunk_file.exists()}")
                 if success and chunk_file.exists():
                     chapter_audio_files.append(chunk_file)
                     total_chunks += 1
-                    print(f"✓ Chunk {chunk_idx} generated successfully")
-                else:
-                    print(f"✗ Chunk {chunk_idx} failed (success={success}, exists={chunk_file.exists()})")
+                    print(f"✓ Chunk {chunk_idx} added to chapter files")
+
+            print(f"Chapter {chapter.number}: {len(chapter_audio_files)}/{len(chunks)} chunks successful")
+
+            if chapter_audio_files:
+                print(f"Merging {len(chapter_audio_files)} audio files...")
+                chapter_output = book_output_dir / f"chapter_{chapter.number}.wav"
+                merged = self._merge_audio_files(chapter_audio_files, chapter_output, OutputFormat.WAV)
+                print(f"Merged chapter file: {merged} (exists: {merged.exists()})")
+                chapter_files.append((chapter.number, chapter.title, merged))
+            else:
+                print(f"✗ No audio files generated for chapter {chapter.number}")
             
             if chapter_audio_files:
                 chapter_output = book_output_dir / f"chapter_{chapter.number}.wav"
                 merged = self._merge_audio_files(chapter_audio_files, chapter_output, OutputFormat.WAV)
                 chapter_files.append((chapter.number, chapter.title, merged))
         
-        print(f"Total chapters processed: {len(chapter_files)}")
+        logger.info(f"Total chapters processed: {len(chapter_files)}")
         for num, title, path in chapter_files:
-            print(f"  Chapter {num}: {path} (exists: {path.exists()})")
+            logger.info(f"  Chapter {num}: {path} (exists: {path.exists()})")
 
         if not chapter_files:
             await task_manager.update_progress(
