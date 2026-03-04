@@ -247,7 +247,9 @@ class AudioGenerator:
             
             print(f"Checking for file: {output_path}")
             print(f"File exists: {output_path.exists()}")
-            
+            print(f"Parent dir exists: {output_path.parent.exists()}")
+            print(f"Parent dir contents: {list(output_path.parent.glob('*'))}")
+
             if not output_path.exists():
                 wav_files = list(Path(output_path.parent).glob("*.wav"))
                 print(f"WAV files in dir: {wav_files}")
@@ -426,12 +428,19 @@ class AudioGenerator:
                 if success and chunk_file.exists():
                     chapter_audio_files.append(chunk_file)
                     total_chunks += 1
+                    print(f"✓ Chunk {chunk_idx} generated successfully")
+                else:
+                    print(f"✗ Chunk {chunk_idx} failed (success={success}, exists={chunk_file.exists()})")
             
             if chapter_audio_files:
                 chapter_output = book_output_dir / f"chapter_{chapter.number}.wav"
                 merged = self._merge_audio_files(chapter_audio_files, chapter_output, OutputFormat.WAV)
                 chapter_files.append((chapter.number, chapter.title, merged))
         
+        print(f"Total chapters processed: {len(chapter_files)}")
+        for num, title, path in chapter_files:
+            print(f"  Chapter {num}: {path} (exists: {path.exists()})")
+
         if not chapter_files:
             await task_manager.update_progress(
                 task.id,
@@ -439,7 +448,7 @@ class AudioGenerator:
                 error="No audio files generated"
             )
             return None
-        
+
         if merge and len(chapter_files) > 1:
             final_audio_path = OUTPUT_DIR / f"{book.metadata.id}_{int(time.time())}"
             
