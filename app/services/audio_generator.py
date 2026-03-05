@@ -219,11 +219,12 @@ class AudioGenerator:
         log_msg(f"Using ckpt: {ckpt_path} (exists: {ckpt_path.exists()})")
         log_msg(f"Using vocab: {vocab_path} (exists: {vocab_path.exists()})")
 
+        # Формируем команду (shell=False автоматически экранирует аргументы)
         cmd = [
             "f5-tts_infer-cli",
             "--ckpt_file", str(ckpt_path),
             "--vocab_file", str(vocab_path),
-            "--gen_text", text_with_accents,
+            "--gen_text", text_with_accents[:150],  # Ограничиваем длину текста
             "--output_dir", str(output_path.parent),
             "--output_file", output_path.name,
             "--device", DEVICE,
@@ -233,19 +234,19 @@ class AudioGenerator:
         if speed != 1.0:
             cmd += ["--speed", str(speed)]
 
-        log_msg(f"Full command: {' '.join(cmd)}")
+        log_msg(f"Command args: ckpt={ckpt_path.name}, vocab={vocab_path.name}, text_len={len(text_with_accents)}")
         
         log_msg(f"Output path: {output_path}")
         log_msg(f"Text length: {len(text_with_accents)} chars")
 
         # Создаем директорию заранее
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Directory created: {output_path.parent.exists()}")
+        log_msg(f"Directory created: {output_path.parent.exists()}")
 
         # Проверяем, что f5-tts_infer-cli доступен
         import shutil
         if not shutil.which("f5-tts_infer-cli"):
-            logger.error("ERROR: f5-tts_infer-cli not found in PATH")
+            log_msg("ERROR: f5-tts_infer-cli not found in PATH")
             return False
 
         print(f"Running: {' '.join(cmd[:6])}...")
@@ -258,6 +259,7 @@ class AudioGenerator:
             timeout = 7200 if DEVICE == "cpu" else 600
 
             # Запускаем в отдельном потоке, чтобы не блокировать event loop
+            # shell=False для правильной обработки аргументов с пробелами
             def run_tts():
                 return subprocess.run(
                     cmd,
@@ -265,7 +267,7 @@ class AudioGenerator:
                     text=True,
                     timeout=timeout,
                     cwd=str(output_path.parent),
-                    shell=True
+                    shell=False
                 )
 
             # Запускаем в executor и периодически проверяем
@@ -287,7 +289,7 @@ class AudioGenerator:
 
             if not output_path.exists():
                 wav_files = list(Path(output_path.parent).glob("*.wav"))
-                logger.warning(f"WAV files in dir: {wav_files}")
+                log_msg(f"WAV files in dir: {wav_files}")
 
             return output_path.exists()
         except subprocess.TimeoutExpired:
@@ -306,12 +308,18 @@ class AudioGenerator:
         format: str = "mp3"
     ) -> Path:
         """Объединение аудиофайлов в один"""
+        log_msg(f"_merge_audio_files: {len(input_files)} files, format={format}")
+        for i, f in enumerate(input_files):
+            log_msg(f"  Input {i}: {f} (exists: {f.exists()})")
+
         concat_list = TEMP_DIR / f"concat_{int(time.time())}.txt"
-        
+
         with open(concat_list, 'w', encoding='utf-8') as f:
             for file_path in input_files:
                 f.write(f"file '{file_path.absolute()}'\n")
-        
+
+        log_msg(f"Concat list created: {concat_list}")
+
         if format == "mp3":
             output_path = output_path.with_suffix('.mp3')
             subprocess.run([
@@ -328,6 +336,7 @@ class AudioGenerator:
                 str(output_path)
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
+        log_msg(f"ffmpeg result: {output_path} (exists: {output_path.exists()})")
         concat_list.unlink(missing_ok=True)
         return output_path
     
@@ -492,30 +501,43 @@ class AudioGenerator:
             )
             return None
 
+        log_msg(f"Merging {len(chapter_files)} chapters, merge={merge}, add_markers={add_markers}")
+
         if merge and len(chapter_files) > 1:
             final_audio_path = OUTPUT_DIR / f"{book.metadata.id}_{int(time.time())}"
-            
+            log_msg(f"Final output path: {final_audio_path}")
+
             if add_markers:
-                await self._add_chapter_markers(chapter_files, final_audio_path, out_format_str)
+                log_msg("Adding chapter markers...")
+                final_audio_path = await self._add_chapter_markers(chapter_files, final_audio_path, out_format_str)
             else:
+                log_msg("Merging audio files...")
                 audio_files = [f[2] for f in chapter_files]
                 final_audio_path = self._merge_audio_files(
                     audio_files,
                     final_audio_path,
                     out_format_str
                 )
+            log_msg(f"Merge result: {final_audio_path} (exists: {final_audio_path.exists()})")
         else:
             _, _, single_file = chapter_files[0]
             final_audio_path = single_file.with_suffix(f".{out_format_str}")
+            log_msg(f"Single file output: {final_audio_path}")
             if single_file.suffix != f".{out_format_str}":
+                log_msg(f"Converting {single_file} to {out_format_str}")
                 subprocess.run([
                     "ffmpeg", "-y", "-i", str(single_file),
                     str(final_audio_path)
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
+
+        log_msg(f"Final file exists: {final_audio_path.exists()}")
+        if final_audio_path.exists():
+            log_msg(f"Final file size: {final_audio_path.stat().st_size} bytes")
+
         shutil.rmtree(book_output_dir, ignore_errors=True)
-        
-        return final_audio_path
+        log_msg(f"Cleaned up temp dir: {book_output_dir}")
+
+        return final_audio_path if final_audio_path.exists() else None
     
     async def _add_chapter_markers(
         self,
